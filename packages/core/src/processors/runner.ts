@@ -33,8 +33,20 @@ export class ProcessorState<OUTPUT extends OutputSchema = undefined> {
   public streamParts: ChunkType<OUTPUT>[] = [];
   public span?: Span<SpanType.PROCESSOR_RUN>;
 
-  constructor(options: { processorName: string; tracingContext?: TracingContext; processorIndex?: number }) {
-    const { processorName, tracingContext, processorIndex } = options;
+  constructor(options: {
+    processorName: string;
+    tracingContext?: TracingContext;
+    processorIndex?: number;
+    executorType?: 'workflow' | 'legacy';
+  }) {
+    const { processorName, tracingContext, processorIndex, executorType = 'legacy' } = options;
+
+    // Skip span creation for workflows - individual processor steps in workflow.ts create their own spans
+    // Only create spans for legacy mode (direct processOutputStream calls)
+    if (executorType === 'workflow') {
+      return;
+    }
+
     const currentSpan = tracingContext?.currentSpan;
 
     // Find the AGENT_RUN span by walking up the parent chain
@@ -45,7 +57,7 @@ export class ProcessorState<OUTPUT extends OutputSchema = undefined> {
       entityType: EntityType.OUTPUT_PROCESSOR,
       entityName: processorName,
       attributes: {
-        processorType: 'output',
+        processorExecutor: executorType,
         processorIndex: processorIndex ?? 0,
       },
       input: {
@@ -182,42 +194,17 @@ export class ProcessorRunner {
 
       // Handle workflow as processor
       if (isProcessorWorkflow(processorOrWorkflow)) {
-        const currentSpan = tracingContext?.currentSpan;
-        const parentSpan = currentSpan?.findParent(SpanType.AGENT_RUN) || currentSpan?.parent || currentSpan;
-        const processorSpan = parentSpan?.createChildSpan({
-          type: SpanType.PROCESSOR_RUN,
-          name: `output processor workflow: ${processorOrWorkflow.id}`,
-          entityType: EntityType.OUTPUT_PROCESSOR,
-          entityId: processorOrWorkflow.id,
-          entityName: processorOrWorkflow.name,
-          attributes: {
-            processorType: 'output',
-            processorIndex: index,
+        await this.executeWorkflowAsProcessor(
+          processorOrWorkflow,
+          {
+            phase: 'outputResult',
+            messages: processableMessages,
+            messageList,
+            retryCount,
           },
-          input: processableMessages,
-        });
-
-        try {
-          await this.executeWorkflowAsProcessor(
-            processorOrWorkflow,
-            {
-              phase: 'outputResult',
-              messages: processableMessages,
-              messageList,
-              retryCount,
-            },
-            tracingContext,
-            requestContext,
-          );
-
-          processorSpan?.end({ output: processableMessages });
-        } catch (error) {
-          if (error instanceof TripWire) {
-            throw error;
-          }
-          processorSpan?.error({ error: error as Error, endSpan: true });
-          throw error;
-        }
+          tracingContext,
+          requestContext,
+        );
         continue;
       }
 
@@ -244,7 +231,7 @@ export class ProcessorRunner {
         entityId: processor.id,
         entityName: processor.name,
         attributes: {
-          processorType: 'output',
+          processorExecutor: 'legacy',
           processorIndex: index,
         },
         input: processableMessages,
@@ -341,6 +328,7 @@ export class ProcessorRunner {
               processorName: workflowId,
               tracingContext,
               processorIndex: index,
+              executorType: 'workflow',
             });
             processorStates.set(workflowId, state);
           }
@@ -544,44 +532,19 @@ export class ProcessorRunner {
 
       // Handle workflow as processor
       if (isProcessorWorkflow(processorOrWorkflow)) {
-        const currentSpan = tracingContext?.currentSpan;
-        const parentSpan = currentSpan?.findParent(SpanType.AGENT_RUN) || currentSpan?.parent || currentSpan;
-        const processorSpan = parentSpan?.createChildSpan({
-          type: SpanType.PROCESSOR_RUN,
-          name: `input processor workflow: ${processorOrWorkflow.id}`,
-          entityType: EntityType.INPUT_PROCESSOR,
-          entityId: processorOrWorkflow.id,
-          entityName: processorOrWorkflow.name,
-          attributes: {
-            processorType: 'input',
-            processorIndex: index,
+        const currentSystemMessages = messageList.getAllSystemMessages();
+        await this.executeWorkflowAsProcessor(
+          processorOrWorkflow,
+          {
+            phase: 'input',
+            messages: processableMessages,
+            messageList,
+            systemMessages: currentSystemMessages,
+            retryCount,
           },
-          input: processableMessages,
-        });
-
-        try {
-          const currentSystemMessages = messageList.getAllSystemMessages();
-          await this.executeWorkflowAsProcessor(
-            processorOrWorkflow,
-            {
-              phase: 'input',
-              messages: processableMessages,
-              messageList,
-              systemMessages: currentSystemMessages,
-              retryCount,
-            },
-            tracingContext,
-            requestContext,
-          );
-
-          processorSpan?.end({ output: messageList.get.input.db() });
-        } catch (error) {
-          if (error instanceof TripWire) {
-            throw error;
-          }
-          processorSpan?.error({ error: error as Error, endSpan: true });
-          throw error;
-        }
+          tracingContext,
+          requestContext,
+        );
         continue;
       }
 
@@ -608,7 +571,7 @@ export class ProcessorRunner {
         entityId: processor.id,
         entityName: processor.name,
         attributes: {
-          processorType: 'input',
+          processorExecutor: 'legacy',
           processorIndex: index,
         },
         input: processableMessages,
@@ -782,47 +745,21 @@ export class ProcessorRunner {
 
       // Handle workflow as processor with inputStep phase
       if (isProcessorWorkflow(processorOrWorkflow)) {
-        const currentSpan = tracingContext?.currentSpan;
-        const parentSpan = currentSpan?.findParent(SpanType.AGENT_RUN) || currentSpan?.parent || currentSpan;
-        const processorSpan = parentSpan?.createChildSpan({
-          type: SpanType.PROCESSOR_RUN,
-          name: `input step processor workflow: ${processorOrWorkflow.id}`,
-          entityType: EntityType.INPUT_PROCESSOR,
-          entityId: processorOrWorkflow.id,
-          entityName: processorOrWorkflow.name,
-          attributes: {
-            processorType: 'input',
-            processorIndex: index,
+        const currentSystemMessages = messageList.getAllSystemMessages();
+        const result = await this.executeWorkflowAsProcessor(
+          processorOrWorkflow,
+          {
+            phase: 'inputStep',
+            messages: processableMessages,
+            messageList,
+            stepNumber,
+            systemMessages: currentSystemMessages,
+            ...stepInput,
           },
-          input: { messages: processableMessages, stepNumber },
-        });
-
-        try {
-          const currentSystemMessages = messageList.getAllSystemMessages();
-          const result = await this.executeWorkflowAsProcessor(
-            processorOrWorkflow,
-            {
-              phase: 'inputStep',
-              messages: processableMessages,
-              messageList,
-              stepNumber,
-              systemMessages: currentSystemMessages,
-              ...stepInput,
-            },
-            tracingContext,
-            requestContext,
-          );
-
-          Object.assign(stepInput, result);
-
-          processorSpan?.end({ output: messageList.get.all.db() });
-        } catch (error) {
-          if (error instanceof TripWire) {
-            throw error;
-          }
-          processorSpan?.error({ error: error as Error, endSpan: true });
-          throw error;
-        }
+          tracingContext,
+          requestContext,
+        );
+        Object.assign(stepInput, result);
         continue;
       }
 
@@ -861,11 +798,11 @@ export class ProcessorRunner {
       const processorSpan = currentSpan?.createChildSpan({
         type: SpanType.PROCESSOR_RUN,
         name: `input step processor: ${processor.id}`,
-        entityType: EntityType.INPUT_PROCESSOR,
+        entityType: EntityType.INPUT_STEP_PROCESSOR,
         entityId: processor.id,
         entityName: processor.name,
         attributes: {
-          processorType: 'input',
+          processorExecutor: 'legacy',
           processorIndex: index,
         },
         input: {
@@ -1009,49 +946,24 @@ export class ProcessorRunner {
 
       // Handle workflow as processor with outputStep phase
       if (isProcessorWorkflow(processorOrWorkflow)) {
-        const currentSpan = tracingContext?.currentSpan;
-        const parentSpan = currentSpan?.findParent(SpanType.AGENT_RUN) || currentSpan?.parent || currentSpan;
-        const processorSpan = parentSpan?.createChildSpan({
-          type: SpanType.PROCESSOR_RUN,
-          name: `output step processor workflow: ${processorOrWorkflow.id}`,
-          entityType: EntityType.OUTPUT_PROCESSOR,
-          entityId: processorOrWorkflow.id,
-          entityName: processorOrWorkflow.name,
-          attributes: {
-            processorType: 'output',
-            processorIndex: index,
+        const currentSystemMessages = messageList.getAllSystemMessages();
+        await this.executeWorkflowAsProcessor(
+          processorOrWorkflow,
+          {
+            phase: 'outputStep',
+            messages: processableMessages,
+            messageList,
+            stepNumber,
+            finishReason,
+            toolCalls,
+            text,
+            systemMessages: currentSystemMessages,
+            steps,
+            retryCount,
           },
-          input: { messages: processableMessages, stepNumber, finishReason, toolCalls, text },
-        });
-
-        try {
-          const currentSystemMessages = messageList.getAllSystemMessages();
-          await this.executeWorkflowAsProcessor(
-            processorOrWorkflow,
-            {
-              phase: 'outputStep',
-              messages: processableMessages,
-              messageList,
-              stepNumber,
-              finishReason,
-              toolCalls,
-              text,
-              systemMessages: currentSystemMessages,
-              steps,
-              retryCount,
-            },
-            tracingContext,
-            requestContext,
-          );
-
-          processorSpan?.end({ output: messageList.get.all.db() });
-        } catch (error) {
-          if (error instanceof TripWire) {
-            throw error;
-          }
-          processorSpan?.error({ error: error as Error, endSpan: true });
-          throw error;
-        }
+          tracingContext,
+          requestContext,
+        );
         continue;
       }
 
@@ -1073,11 +985,11 @@ export class ProcessorRunner {
       const processorSpan = parentSpan?.createChildSpan({
         type: SpanType.PROCESSOR_RUN,
         name: `output step processor: ${processor.id}`,
-        entityType: EntityType.OUTPUT_PROCESSOR,
+        entityType: EntityType.OUTPUT_STEP_PROCESSOR,
         entityId: processor.id,
         entityName: processor.name,
         attributes: {
-          processorType: 'output',
+          processorExecutor: 'legacy',
           processorIndex: index,
         },
         input: { messages: processableMessages, stepNumber, finishReason, toolCalls, text },

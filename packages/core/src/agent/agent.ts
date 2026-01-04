@@ -33,7 +33,7 @@ import type { Mastra } from '../mastra';
 import type { MastraMemory } from '../memory/memory';
 import type { MemoryConfig } from '../memory/types';
 import type { TracingContext, TracingProperties } from '../observability';
-import { EntityType, SpanType, getOrCreateSpan } from '../observability';
+import { EntityType, InternalSpans, SpanType, getOrCreateSpan } from '../observability';
 import type { InputProcessorOrWorkflow, OutputProcessorOrWorkflow, ProcessorWorkflow } from '../processors/index';
 import { ProcessorStepSchema, isProcessorWorkflow } from '../processors/index';
 import { ProcessorRunner } from '../processors/runner';
@@ -383,14 +383,31 @@ export class Agent<TAgentId extends string = string, TTools extends ToolsInput =
       inputSchema: ProcessorStepSchema,
       outputSchema: ProcessorStepSchema,
       type: 'processor',
-      options: { validateInputs: false },
+      options: {
+        validateInputs: false,
+        tracingPolicy: {
+          // mark all workflow spans related to processor execution as internal
+          internal: InternalSpans.WORKFLOW,
+        },
+      },
     });
 
-    for (const processorOrWorkflow of validProcessors) {
+    console.log('workflow');
+    console.log(workflow.id);
+
+    for (const [index, processorOrWorkflow] of validProcessors.entries()) {
       // Convert processor to step, or use workflow directly (nested workflows are allowed)
-      const step = isProcessorWorkflow(processorOrWorkflow)
-        ? processorOrWorkflow
-        : createStep(processorOrWorkflow as Exclude<T, ProcessorWorkflow>);
+      let step;
+      if (isProcessorWorkflow(processorOrWorkflow)) {
+        step = processorOrWorkflow;
+      } else {
+        // Set processorIndex on the processor for span attributes
+        const processor = processorOrWorkflow as Exclude<T, ProcessorWorkflow>;
+        processor.processorIndex = index;
+        step = createStep(processor);
+      }
+
+      console.log(`adding step: ${step.id}`);
       workflow = workflow.then(step);
     }
 
@@ -405,6 +422,7 @@ export class Agent<TAgentId extends string = string, TTools extends ToolsInput =
    */
   private async listResolvedOutputProcessors(requestContext?: RequestContext): Promise<OutputProcessorOrWorkflow[]> {
     // Get configured output processors
+    console.log('listResolvedOutputProcessors');
     const configuredProcessors = this.#outputProcessors
       ? typeof this.#outputProcessors === 'function'
         ? await this.#outputProcessors({ requestContext: requestContext || new RequestContext() })
@@ -430,6 +448,7 @@ export class Agent<TAgentId extends string = string, TTools extends ToolsInput =
    */
   private async listResolvedInputProcessors(requestContext?: RequestContext): Promise<InputProcessorOrWorkflow[]> {
     // Get configured input processors
+    console.log('listResolvedInputProcessors');
     const configuredProcessors = this.#inputProcessors
       ? typeof this.#inputProcessors === 'function'
         ? await this.#inputProcessors({ requestContext: requestContext || new RequestContext() })
@@ -469,6 +488,7 @@ export class Agent<TAgentId extends string = string, TTools extends ToolsInput =
    */
   public async getConfiguredProcessorWorkflows(): Promise<ProcessorWorkflow[]> {
     const workflows: ProcessorWorkflow[] = [];
+    console.log('getConfiguredProcessorWorkflows');
 
     // Get input processors (static or from function)
     if (this.#inputProcessors) {
