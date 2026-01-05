@@ -11,31 +11,6 @@ export type StoragePagination = {
 
 export type StorageColumnType = 'text' | 'timestamp' | 'uuid' | 'jsonb' | 'integer' | 'float' | 'bigint' | 'boolean';
 
-/**
- * Describes capabilities supported by a storage adapter.
- * Providers should override the base class getter to indicate their supported features.
- */
-export type StorageSupports = {
-  /** Whether the adapter supports filtering by resource scope in queries */
-  selectByIncludeResourceScope: boolean;
-  /** Whether the adapter supports per-resource working memory */
-  resourceWorkingMemory: boolean;
-  /** Whether the adapter supports checking if a column exists */
-  hasColumn: boolean;
-  /** Whether the adapter supports creating tables dynamically */
-  createTable: boolean;
-  /** Whether the adapter supports deleting individual messages */
-  deleteMessages: boolean;
-  /** Whether the adapter supports observability (tracing/spans) */
-  observability: boolean;
-  /** Whether the adapter supports index management operations */
-  indexManagement: boolean;
-  /** Whether the adapter supports listing scores by span */
-  listScoresBySpan: boolean;
-  /** Whether the adapter supports agent persistence */
-  agents: boolean;
-};
-
 export interface StorageColumn {
   type: StorageColumnType;
   primaryKey?: boolean;
@@ -103,6 +78,18 @@ export type StorageListMessagesInput = {
     dateRange?: {
       start?: Date;
       end?: Date;
+      /**
+       * When true, excludes the start date from results (uses > instead of >=).
+       * Useful for cursor-based pagination to avoid duplicates.
+       * @default false
+       */
+      startExclusive?: boolean;
+      /**
+       * When true, excludes the end date from results (uses < instead of <=).
+       * Useful for cursor-based pagination to avoid duplicates.
+       * @default false
+       */
+      endExclusive?: boolean;
     };
   };
   orderBy?: StorageOrderBy<'createdAt'>;
@@ -149,6 +136,58 @@ export type StorageListThreadsByResourceIdInput = {
 
 export type StorageListThreadsByResourceIdOutput = PaginationInfo & {
   threads: StorageThreadType[];
+};
+
+/**
+ * Metadata stored on cloned threads to track their origin
+ */
+export type ThreadCloneMetadata = {
+  /** ID of the thread this was cloned from */
+  sourceThreadId: string;
+  /** Timestamp when the clone was created */
+  clonedAt: Date;
+  /** ID of the last message included in the clone (if messages were copied) */
+  lastMessageId?: string;
+};
+
+/**
+ * Input options for cloning a thread
+ */
+export type StorageCloneThreadInput = {
+  /** ID of the thread to clone */
+  sourceThreadId: string;
+  /** ID for the new cloned thread (if not provided, a random UUID will be generated) */
+  newThreadId?: string;
+  /** Resource ID for the new thread (defaults to source thread's resourceId) */
+  resourceId?: string;
+  /** Title for the new cloned thread */
+  title?: string;
+  /** Additional metadata to merge with clone metadata */
+  metadata?: Record<string, unknown>;
+  /** Options for filtering which messages to include */
+  options?: {
+    /** Maximum number of messages to copy (from most recent) */
+    messageLimit?: number;
+    /** Filter messages by date range or specific IDs */
+    messageFilter?: {
+      /** Only include messages created on or after this date */
+      startDate?: Date;
+      /** Only include messages created on or before this date */
+      endDate?: Date;
+      /** Only include messages with these specific IDs */
+      messageIds?: string[];
+    };
+  };
+};
+
+/**
+ * Output from cloning a thread
+ */
+export type StorageCloneThreadOutput = {
+  /** The newly created cloned thread */
+  thread: StorageThreadType;
+  /** The messages that were copied to the new thread */
+  clonedMessages: MastraDBMessage[];
 };
 
 export type StorageResourceType = {

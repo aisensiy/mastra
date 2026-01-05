@@ -434,19 +434,46 @@ export async function createDefaultTestContext(): Promise<AdapterTestContext> {
     }
 
     // Add test stored agent for stored agents routes
-    if (storage.supports.agents) {
-      const agents = await storage.getStore('agents');
-      if (agents) {
-        await agents.createAgent({
-          agent: {
-            id: 'test-stored-agent',
-            name: 'Test Stored Agent',
-            description: 'A test stored agent for integration tests',
-            instructions: 'Test instructions for stored agent',
-            model: { provider: 'openai', name: 'gpt-4o' },
+    const agents = await storage.getStore('agents');
+    if (agents) {
+      await agents.createAgent({
+        agent: {
+          id: 'test-stored-agent',
+          name: 'Test Stored Agent',
+          description: 'A test stored agent for integration tests',
+          instructions: 'Test instructions for stored agent',
+          model: { provider: 'openai', name: 'gpt-4o' },
+        },
+      });
+    }
+
+    // Add test thread and messages to Mastra's storage for memory routes without agentId
+    // This is needed because when agentId is not provided, the handler falls back to storage directly
+    const memoryStore = await storage.getStore('memory');
+    if (memoryStore) {
+      await memoryStore.saveThread({
+        thread: {
+          id: 'test-thread',
+          resourceId: 'test-resource',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          metadata: {},
+        },
+      });
+      await memoryStore.saveMessages({
+        messages: [
+          {
+            id: 'test-message-1',
+            threadId: 'test-thread',
+            role: 'user',
+            content: {
+              format: 2,
+              parts: [{ type: 'text', text: 'Test message' }],
+            },
+            createdAt: new Date(),
           },
-        });
-      }
+        ],
+      });
     }
   }
 

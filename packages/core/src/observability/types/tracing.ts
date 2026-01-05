@@ -5,7 +5,7 @@ import type { MastraError } from '../../error';
 import type { IMastraLogger } from '../../logger';
 import type { Mastra } from '../../mastra';
 import type { RequestContext } from '../../request-context';
-import type { LanguageModelUsage, ProviderMetadata } from '../../stream/types';
+import type { LanguageModelUsage, ProviderMetadata, StepStartPayload } from '../../stream/types';
 import type { WorkflowRunStatus, WorkflowStepStatus } from '../../workflows';
 
 // ============================================================================
@@ -578,6 +578,7 @@ export interface IModelSpanTracker {
   reportGenerationError(options: ErrorSpanOptions<SpanType.MODEL_GENERATION>): void;
   endGeneration(options?: EndGenerationOptions): void;
   wrapStream<T extends { pipeThrough: Function }>(stream: T): T;
+  startStep(payload?: StepStartPayload): void;
 }
 
 /**
@@ -893,6 +894,33 @@ export type TracingProperties = {
 // ============================================================================
 
 /**
+ * Options for controlling serialization of span data.
+ * These options control how input, output, and attributes are cleaned before export.
+ */
+export interface SerializationOptions {
+  /**
+   * Maximum length for string values
+   * @default 1024
+   */
+  maxStringLength?: number;
+  /**
+   * Maximum depth for nested objects
+   * @default 6
+   */
+  maxDepth?: number;
+  /**
+   * Maximum number of items in arrays
+   * @default 50
+   */
+  maxArrayLength?: number;
+  /**
+   * Maximum number of keys in objects
+   * @default 50
+   */
+  maxObjectKeys?: number;
+}
+
+/**
  * Configuration for a single observability instance
  */
 export interface ObservabilityInstanceConfig {
@@ -916,6 +944,11 @@ export interface ObservabilityInstanceConfig {
    * Supports dot notation for nested values.
    */
   requestContextKeys?: string[];
+  /**
+   * Options for controlling serialization of span data (input/output/attributes).
+   * Use these to customize truncation limits for large payloads.
+   */
+  serializationOptions?: SerializationOptions;
 }
 
 /**

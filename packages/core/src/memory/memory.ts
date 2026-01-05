@@ -19,6 +19,8 @@ import type {
   StorageListMessagesInput,
   StorageListThreadsByResourceIdInput,
   StorageListThreadsByResourceIdOutput,
+  StorageCloneThreadInput,
+  StorageCloneThreadOutput,
 } from '../storage';
 import { augmentWithInit } from '../storage/storageWithInit';
 import type { ToolAction } from '../tools';
@@ -165,6 +167,11 @@ https://mastra.ai/en/docs/memory/semantic-recall`,
       } else {
         this.embedder = config.embedder;
       }
+
+      // Set embedder options (e.g., providerOptions for Google models)
+      if (config.embedderOptions) {
+        this.embedderOptions = config.embedderOptions;
+      }
     }
   }
 
@@ -201,11 +208,17 @@ https://mastra.ai/en/docs/memory/overview`,
     this.vector = vector;
   }
 
-  public setEmbedder(embedder: EmbeddingModelId | MastraEmbeddingModel<string>) {
+  public setEmbedder(
+    embedder: EmbeddingModelId | MastraEmbeddingModel<string>,
+    embedderOptions?: MastraEmbeddingOptions,
+  ) {
     if (typeof embedder === 'string') {
       this.embedder = new ModelRouterEmbeddingModel(embedder);
     } else {
       this.embedder = embedder;
+    }
+    if (embedderOptions) {
+      this.embedderOptions = embedderOptions;
     }
   }
 
@@ -617,6 +630,7 @@ https://mastra.ai/en/docs/memory/overview`,
             storage: memoryStore,
             vector: this.vector,
             embedder: this.embedder,
+            embedderOptions: this.embedderOptions,
             indexName,
             ...semanticConfig,
           }),
@@ -692,6 +706,7 @@ https://mastra.ai/en/docs/memory/overview`,
             storage: memoryStore,
             vector: this.vector,
             embedder: this.embedder,
+            embedderOptions: this.embedderOptions,
             indexName,
             ...semanticRecallConfig,
           }),
@@ -728,4 +743,11 @@ https://mastra.ai/en/docs/memory/overview`,
   }
 
   abstract deleteMessages(messageIds: MessageDeleteInput): Promise<void>;
+
+  /**
+   * Clones a thread with all its messages to a new thread
+   * @param args - Clone parameters including source thread ID and optional filtering options
+   * @returns Promise resolving to the cloned thread and copied messages
+   */
+  abstract cloneThread(args: StorageCloneThreadInput): Promise<StorageCloneThreadOutput>;
 }
