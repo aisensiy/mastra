@@ -6,7 +6,7 @@
  * MODEL_GENERATION spans become Langfuse generations, all others become spans.
  */
 
-import type { AnyExportedSpan, ModelGenerationAttributes } from '@mastra/core/observability';
+import type { AnyExportedSpan, ModelGenerationAttributes, SpanErrorInfo } from '@mastra/core/observability';
 import { SpanType } from '@mastra/core/observability';
 import { omitKeys } from '@mastra/core/utils';
 import { TrackingExporter } from '@mastra/observability';
@@ -161,6 +161,14 @@ export class LangfuseExporter extends TrackingExporter<
       const langfuseRoot = traceData.getRoot();
       langfuseRoot?.update({ output: span.output });
     }
+  }
+
+  protected async _abortSpan(args: { span: LangfuseSpan; reason: SpanErrorInfo; }): Promise<void> {
+    const { span, reason } = args;
+    span.end({
+      level: 'ERROR',
+      statusMessage: reason.message,
+    });
   }
 
   private buildTracePayload(span: AnyExportedSpan): Record<string, any> {
@@ -338,17 +346,9 @@ export class LangfuseExporter extends TrackingExporter<
     }
   }
 
-  async shutdown(): Promise<void> {
+  async _postShutdown(): Promise<void> {
     if (this.client) {
       await this.client.shutdownAsync();
     }
-    //TODO: This should be re-written to first stop accepting new spans,
-    // then close all existing spans with some shutdown message
-    // then waiting for the client to flush everything
-    //
-    // If the flush is extracted into some method outside shutdown,
-    // it should optionally end any existing spans.
-    this.clearTraceMap();
-    await super.shutdown();
   }
 }

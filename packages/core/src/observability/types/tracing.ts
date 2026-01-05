@@ -368,6 +368,14 @@ export type AnySpanAttributes = SpanTypeMap[keyof SpanTypeMap];
 // Span Interfaces
 // ============================================================================
 
+export interface SpanErrorInfo {
+    message: string;
+    id?: string;
+    domain?: string;
+    category?: string;
+    details?: Record<string, any>;
+}
+
 /**
  * Base Span interface
  */
@@ -401,13 +409,7 @@ interface BaseSpan<TType extends SpanType> {
   /** Output generated at the end of the span */
   output?: any;
   /** Error information if span failed */
-  errorInfo?: {
-    message: string;
-    id?: string;
-    domain?: string;
-    category?: string;
-    details?: Record<string, any>;
-  };
+  errorInfo?: SpanErrorInfo;
   /** Is an event span? (event occurs at startTime, has no endTime) */
   isEvent: boolean;
 }

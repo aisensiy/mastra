@@ -1,6 +1,7 @@
-import type { TracingEvent, AnyExportedSpan } from '@mastra/core/observability';
+import type { TracingEvent, AnyExportedSpan, SpanErrorInfo } from '@mastra/core/observability';
 import type { BaseExporterConfig } from './base';
 import { BaseExporter } from './base';
+import { MastraError } from '@mastra/core/error';
 
 export interface TrackingExporterConfig extends BaseExporterConfig {
   // Subclasses can extend this with vendor-specific config
@@ -91,6 +92,10 @@ export class TraceData<TRootData, TSpanData, TEventData, TMetadata> {
     return this.#activeSpanIds.size;
   }
 
+  get activeSpanIds(): string[] {
+    return [...this.#activeSpanIds]
+  }
+
   addEvent(args: { eventId: string; eventData: TEventData }) {
     this.#events.set(args.eventId, args.eventData);
   }
@@ -143,6 +148,7 @@ export abstract class TrackingExporter<
    * Contains vendor SDK objects, span maps, and active span tracking.
    */
   #traceMap = new Map<string, TraceData<TRootData, TSpanData, TEventData, TMetadata>>();
+  #shutdownStarted = false;
 
   /**
    * Subclass configuration (typed for subclass-specific options)
@@ -185,6 +191,11 @@ export abstract class TrackingExporter<
     traceData: TraceData<TRootData, TSpanData, TEventData, TMetadata>;
   }): Promise<void>;
 
+  protected abstract _abortSpan(args: {
+    span: TSpanData, reason: SpanErrorInfo
+  }): Promise<void>;
+
+
   protected skipBuildRootTask = false;
   protected skipSpanUpdateEvents = false;
   protected skipCachingEventSpans = false;
@@ -204,8 +215,11 @@ export abstract class TrackingExporter<
   }
 
   protected async _exportTracingEvent(event: TracingEvent): Promise<void> {
-    const method = this.getMethod(event);
+    if (this.#shutdownStarted) {
+      return
+    }
 
+    const method = this.getMethod(event);
     if (method == 'handleSpanUpdate' && this.skipSpanUpdateEvents) {
       return;
     }
@@ -219,14 +233,12 @@ export abstract class TrackingExporter<
         this.logger.debug(`${this.name}: Building root`, {
           traceId: exportedSpan.traceId,
           spanId: exportedSpan.id,
-          method,
         });
         const rootData = await this._buildRoot({ span: exportedSpan, traceData });
         if (rootData) {
           this.logger.debug(`${this.name}: Adding root`, {
             traceId: exportedSpan.traceId,
             spanId: exportedSpan.id,
-            method,
           });
           traceData.addRoot({ rootId: exportedSpan.id, rootData });
         }
@@ -234,7 +246,6 @@ export abstract class TrackingExporter<
         this.logger.debug(`${this.name}: Root does not exist, adding early span to queue.`, {
           traceId: exportedSpan.traceId,
           spanId: exportedSpan.id,
-          method,
         });
         traceData.addEarly({ event });
         return;
@@ -246,7 +257,6 @@ export abstract class TrackingExporter<
       this.logger.debug(`${this.name}: Found provider metadata in span`, {
         traceId: exportedSpan.traceId,
         spanId: exportedSpan.id,
-        method,
         metadata,
       });
       traceData.addMetadata({ spanId: exportedSpan.id, metadata });
@@ -258,7 +268,6 @@ export abstract class TrackingExporter<
           this.logger.debug(`${this.name}: handling event`, {
             traceId: exportedSpan.traceId,
             spanId: exportedSpan.id,
-            method,
           });
           traceData.addBranch({ spanId: exportedSpan.id, parentSpanId: exportedSpan.parentSpanId });
           const eventData = await this._buildEvent({ span: exportedSpan, traceData });
@@ -267,7 +276,6 @@ export abstract class TrackingExporter<
               this.logger.debug(`${this.name}: adding event to traceData`, {
                 traceId: exportedSpan.traceId,
                 spanId: exportedSpan.id,
-                method,
               });
               traceData.addEvent({ eventId: exportedSpan.id, eventData });
             }
@@ -275,7 +283,6 @@ export abstract class TrackingExporter<
             this.logger.debug(`${this.name}: adding event early queue`, {
               traceId: exportedSpan.traceId,
               spanId: exportedSpan.id,
-              method,
             });
             traceData.addEarly({ event });
           }
@@ -284,7 +291,6 @@ export abstract class TrackingExporter<
           this.logger.debug(`${this.name}: handling span start`, {
             traceId: exportedSpan.traceId,
             spanId: exportedSpan.id,
-            method,
           });
           traceData.addBranch({ spanId: exportedSpan.id, parentSpanId: exportedSpan.parentSpanId });
           const spanData = await this._buildSpan({ span: exportedSpan, traceData });
@@ -292,14 +298,11 @@ export abstract class TrackingExporter<
             this.logger.debug(`${this.name}: adding span to traceData`, {
               traceId: exportedSpan.traceId,
               spanId: exportedSpan.id,
-              method,
             });
             traceData.addSpan({ spanId: exportedSpan.id, spanData });
           } else {
             this.logger.debug(`${this.name}: adding span early queue`, {
               traceId: exportedSpan.traceId,
-              spanId: exportedSpan.id,
-              method,
             });
             traceData.addEarly({ event });
           }
@@ -308,7 +311,6 @@ export abstract class TrackingExporter<
           this.logger.debug(`${this.name}: handling span update`, {
             traceId: exportedSpan.traceId,
             spanId: exportedSpan.id,
-            method,
           });
           await this._updateSpan({ span: exportedSpan, traceData });
           break;
@@ -316,7 +318,6 @@ export abstract class TrackingExporter<
           this.logger.debug(`${this.name}: handling span end`, {
             traceId: exportedSpan.traceId,
             spanId: exportedSpan.id,
-            method,
           });
           traceData.endSpan({ spanId: exportedSpan.id });
           await this._finishSpan({ span: exportedSpan, traceData });
@@ -331,42 +332,6 @@ export abstract class TrackingExporter<
 
     await this._postExportTracingEvent();
   }
-
-  //   /**
-  //    * Create the initial trace data structure for a new trace.
-  //    * Called when the root span of a trace is first encountered.
-  //    * Note: Other (non-root) span data may have already arrived.
-  //    *
-  //    * @param span - The root span that initiated the trace
-  //    * @returns The initial trace data structure
-  //    */
-  //   protected abstract createTraceData(span: AnyExportedSpan): TraceData<TRootData, TSpanData, TEventData> | Promise<TraceData<TRootData, TSpanData, TEventData>>;
-
-  //   /**
-  //    * Initialize trace data for a root span.
-  //    * Creates the trace entry if it doesn't exist.
-  //    *
-  //    * @param span - The root span
-  //    * @returns The trace data (existing or newly created)
-  //    */
-  //   protected async initTrace(span: AnyExportedSpan): Promise<TraceData<TRootData, TSpanData, TEventData>> {
-  //     // Check if trace already exists - reuse it
-  //     const existing = this.traceMap.get(span.traceId);
-  //     if (existing) {
-  //       this.logger.debug(`${this.name}: Reusing existing trace from local map`, {
-  //         traceId: span.traceId,
-  //         spanId: span.id,
-  //         spanName: span.name,
-  //       });
-  //       return existing;
-  //     }
-
-  //     // Create new trace data
-  //     const traceData = await this.createTraceData(span);
-  //     this.traceMap.set(span.traceId, traceData);
-
-  //     return traceData;
-  //   }
 
   /**
    * Get trace data for a span, creating one if not found
@@ -396,7 +361,7 @@ export abstract class TrackingExporter<
   protected clearTraceData(args: { traceId: string; method: string }): void {
     const { traceId, method } = args;
 
-    // TODO: Ideally this should scheduled for some time in the future
+    // TODO: Ideally this should be scheduled for some time in the future
     // and not occur immediately.
     if (this.#traceMap.has(traceId)) {
       this.#traceMap.delete(traceId);
@@ -411,23 +376,38 @@ export abstract class TrackingExporter<
     return this.#traceMap.size;
   }
 
-  protected clearTraceMap(): void {
+  protected async _preShutdown(): Promise<void> {}
+
+  protected async _postShutdown(): Promise<void> {}
+
+  async shutdown(): Promise<void> {
+    if (this.isDisabled) {
+      return;
+    }
+
+    this.#shutdownStarted = true;
+    this._preShutdown();
+    // End all active spans
+
+    const reason: SpanErrorInfo = {
+      id: 'SHUTDOWN',
+      message: 'Observability is shutting down.',
+      domain: 'MASTRA_OBSERVABILITY',
+      category: 'SYSTEM',
+    };
+
+
+    for (const [_traceId, traceData] of this.#traceMap) {
+      for (const spanId of traceData.activeSpanIds) {
+        const span = traceData.getSpan({spanId})
+        if (span) {
+          await this._abortSpan({ span, reason })
+        }
+      }
+    }
+
     this.#traceMap.clear();
+    this._postShutdown();
+    await super.shutdown();
   }
-
-  //   async shutdown(): Promise<void> {
-  //     // End all active spans
-  //     for (const [_traceId, spanData] of this.#traceMap) {
-  //       for (const [_spanId, span] of spanData.spans) {
-  //         span.end();
-  //       }
-  //       // Loggers don't have an explicit shutdown method
-  //     }
-
-  //     if (this.client) {
-  //       await this.client.shutdownAsync();
-  //     }
-  //     this.traceMap.clear();
-  //     await super.shutdown();
-  //   }
 }

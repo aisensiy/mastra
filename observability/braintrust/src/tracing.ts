@@ -6,7 +6,7 @@
  * Events are handled as zero-duration spans with matching start/end times.
  */
 
-import type { AnyExportedSpan, ModelGenerationAttributes } from '@mastra/core/observability';
+import type { AnyExportedSpan, ModelGenerationAttributes, SpanErrorInfo } from '@mastra/core/observability';
 import { SpanType } from '@mastra/core/observability';
 import { omitKeys } from '@mastra/core/utils';
 import { TrackingExporter } from '@mastra/observability';
@@ -204,6 +204,15 @@ export class BraintrustExporter extends TrackingExporter<
     }
   }
 
+  protected async _abortSpan(args: { span: BraintrustSpan; reason: SpanErrorInfo; }): Promise<void> {
+    const { span, reason } = args;
+    span.log({
+      error: reason.message,
+      metadata: { errorDetails: reason },
+    });
+    span.end();
+  }
+
   /**
    * Transforms MODEL_GENERATION input to Braintrust Thread view format.
    */
@@ -313,21 +322,5 @@ export class BraintrustExporter extends TrackingExporter<
     }
 
     return payload;
-  }
-
-  async shutdown(): Promise<void> {
-    if (!this.config) {
-      return;
-    }
-
-    // // End all active spans
-    // for (const [_traceId, spanData] of this.#traceMap) {
-    //   for (const [_spanId, span] of spanData.spans) {
-    //     span.end();
-    //   }
-    //   // Loggers don't have an explicit shutdown method
-    // }
-    this.clearTraceMap();
-    await super.shutdown();
   }
 }

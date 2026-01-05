@@ -1,4 +1,4 @@
-import type { AnyExportedSpan, ModelGenerationAttributes, UsageStats } from '@mastra/core/observability';
+import type { AnyExportedSpan, ModelGenerationAttributes, SpanErrorInfo, UsageStats } from '@mastra/core/observability';
 import { SpanType } from '@mastra/core/observability';
 import type { TraceData, TrackingExporterConfig } from '@mastra/observability';
 import { TrackingExporter } from '@mastra/observability';
@@ -232,6 +232,38 @@ export class PosthogExporter extends TrackingExporter<
     }
   }
 
+  protected async _abortSpan(args: { span: PosthogSpan; reason: SpanErrorInfo; }): Promise<void> {
+    const { span, reason } = args;
+
+    const endTime = Date.now();
+
+    const distinctId = 'anonymous';
+
+    // For root spans, only send $ai_trace (not $ai_span) to avoid duplicate entries
+    // For non-root spans, send $ai_span or $ai_generation as normal
+    if (span.isRootSpan) {
+      this.captureTraceEvent(span, distinctId, endTime);
+    } else {
+      const eventName = this.mapToPostHogEvent(span.type);
+      const startTime = cachedSpan.startTime.getTime();
+      const latency = (endTime - startTime) / 1000;
+
+      // Check if parent is the root span - if so, use traceId as parent_id
+      // since we don't create an $ai_span for root spans
+      const parentIsRootSpan = this.isParentRootSpan(span, traceData);
+      const properties = this.buildEventProperties(span, latency, parentIsRootSpan);
+
+      const eventMessage = {
+        distinctId,
+        event: eventName,
+        properties,
+        timestamp: new Date(endTime),
+      };
+
+      this.client.capture(eventMessage);
+    }
+  }
+
   /**
    * Capture an explicit $ai_trace event for root spans.
    * This gives us control over trace-level metadata like name and tags,
@@ -372,21 +404,21 @@ export class PosthogExporter extends TrackingExporter<
     }
   }
 
-  private extractErrorProperties(span: AnyExportedSpan): Record<string, any> {
-    if (!span.errorInfo) {
-      return {};
+  private extractErrorProperties(errorInfo?: SpanErrorInfo): Record<string, any> {
+    if (!errorInfo) {
+      return {}
     }
 
     const props: Record<string, string> = {
-      error_message: span.errorInfo.message,
+      error_message: errorInfo.message,
     };
 
-    if (span.errorInfo.id) {
-      props.error_id = span.errorInfo.id;
+    if (errorInfo.id) {
+      props.error_id = errorInfo.id;
     }
 
-    if (span.errorInfo.category) {
-      props.error_category = span.errorInfo.category;
+    if (errorInfo.category) {
+      props.error_category = errorInfo.category;
     }
 
     return props;
@@ -416,7 +448,7 @@ export class PosthogExporter extends TrackingExporter<
     }
     if (attrs.streaming !== undefined) props.$ai_stream = attrs.streaming;
 
-    return { ...props, ...this.extractErrorProperties(span), ...this.extractCustomMetadata(span) };
+    return { ...props, ...this.extractErrorProperties(span.errorInfo), ...this.extractCustomMetadata(span) };
   }
 
   private buildSpanProperties(span: AnyExportedSpan): Record<string, any> {
@@ -435,7 +467,7 @@ export class PosthogExporter extends TrackingExporter<
       Object.assign(props, span.attributes);
     }
 
-    return { ...props, ...this.extractErrorProperties(span), ...this.extractCustomMetadata(span) };
+    return { ...props, ...this.extractErrorProperties(span.errorInfo), ...this.extractCustomMetadata(span) };
   }
 
   private formatMessages(data: SpanData, defaultRole: 'user' | 'assistant' = 'user'): PostHogMessage[] {
@@ -483,12 +515,9 @@ export class PosthogExporter extends TrackingExporter<
     }
   }
 
-  async shutdown(): Promise<void> {
+  async _postShutdown(): Promise<void> {
     if (this.client) {
       await this.client.shutdown();
     }
-    this.clearTraceMap();
-    await super.shutdown();
-    this.logger.info('PostHog exporter shutdown complete');
   }
 }

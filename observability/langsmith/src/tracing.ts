@@ -6,7 +6,7 @@
  * Events are handled as zero-duration RunTrees with matching start/end times.
  */
 
-import type { AnyExportedSpan, ModelGenerationAttributes } from '@mastra/core/observability';
+import type { AnyExportedSpan, ModelGenerationAttributes, SpanErrorInfo } from '@mastra/core/observability';
 import { SpanType } from '@mastra/core/observability';
 import { omitKeys } from '@mastra/core/utils';
 import { TrackingExporter } from '@mastra/observability';
@@ -132,6 +132,17 @@ export class LangSmithExporter extends TrackingExporter<
 
   protected async _finishSpan(args: { span: AnyExportedSpan; traceData: LangSmithTraceData }): Promise<void> {
     await this.handleSpanUpdateOrEnd({ ...args, isEnd: true });
+  }
+
+  protected async _abortSpan(args: { span: LangSmithSpan; reason: SpanErrorInfo; }): Promise<void> {
+    const { span, reason } = args;
+    span.error = reason.message;
+    span.metadata = {
+      ...span.metadata,
+      errorDetails: reason,
+    }
+    await span.end();
+    await span.patchRun();
   }
 
   private async handleSpanUpdateOrEnd(args: {
@@ -266,21 +277,5 @@ export class LangSmithExporter extends TrackingExporter<
     }
 
     return payload;
-  }
-
-  async shutdown(): Promise<void> {
-    if (!this.config) {
-      return;
-    }
-
-    // // End all active spans
-    // for (const [_traceId, spanData] of this.traceMap) {
-    //   for (const [_spanId, runTree] of spanData.spans) {
-    //     await runTree.end();
-    //     await runTree.patchRun();
-    //   }
-    // }
-    this.clearTraceMap();
-    await super.shutdown();
   }
 }
