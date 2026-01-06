@@ -1,5 +1,60 @@
 # @mastra/playground-ui
 
+## 7.0.0-beta.20
+
+### Patch Changes
+
+- dependencies updates: ([#11404](https://github.com/mastra-ai/mastra/pull/11404))
+  - Updated dependency [`zustand@^5.0.9` ↗︎](https://www.npmjs.com/package/zustand/v/5.0.9) (from `^5.0.8`, in `dependencies`)
+
+- dependencies updates: ([#11588](https://github.com/mastra-ai/mastra/pull/11588))
+  - Updated dependency [`zustand@^5.0.9` ↗︎](https://www.npmjs.com/package/zustand/v/5.0.9) (from `^5.0.8`, in `dependencies`)
+
+- Remove `streamVNext`, `resumeStreamVNext`, and `observeStreamVNext` methods, call `stream`, `resumeStream` and `observeStream` directly ([#11499](https://github.com/mastra-ai/mastra/pull/11499))
+
+  ```diff
+  + const run = await workflow.createRun({ runId: '123' });
+  - const stream = await run.streamVNext({ inputData: { ... } });
+  + const stream = await run.stream({ inputData: { ... } });
+  ```
+
+- Add initial state input to workflow form in studio ([#11560](https://github.com/mastra-ai/mastra/pull/11560))
+
+- Fix react/react-DOM version mismatch. ([#11620](https://github.com/mastra-ai/mastra/pull/11620))
+
+- Adds thread cloning to create independent copies of conversations that can diverge. ([#11517](https://github.com/mastra-ai/mastra/pull/11517))
+
+  ```typescript
+  // Clone a thread
+  const { thread, clonedMessages } = await memory.cloneThread({
+    sourceThreadId: 'thread-123',
+    title: 'My Clone',
+    options: {
+      messageLimit: 10, // optional: only copy last N messages
+    },
+  });
+
+  // Check if a thread is a clone
+  if (memory.isClone(thread)) {
+    const source = await memory.getSourceThread(thread.id);
+  }
+
+  // List all clones of a thread
+  const clones = await memory.listClones('thread-123');
+  ```
+
+  Includes:
+  - Storage implementations for InMemory, PostgreSQL, LibSQL, Upstash
+  - API endpoint: `POST /api/memory/threads/:threadId/clone`
+  - Embeddings created for cloned messages (semantic recall)
+  - Clone button in playground UI Memory tab
+
+- Updated dependencies [[`d2d3e22`](https://github.com/mastra-ai/mastra/commit/d2d3e22a419ee243f8812a84e3453dd44365ecb0), [`bc72b52`](https://github.com/mastra-ai/mastra/commit/bc72b529ee4478fe89ecd85a8be47ce0127b82a0), [`05b8bee`](https://github.com/mastra-ai/mastra/commit/05b8bee9e50e6c2a4a2bf210eca25ee212ca24fa), [`c042bd0`](https://github.com/mastra-ai/mastra/commit/c042bd0b743e0e86199d0cb83344ca7690e34a9c), [`940a2b2`](https://github.com/mastra-ai/mastra/commit/940a2b27480626ed7e74f55806dcd2181c1dd0c2), [`e0941c3`](https://github.com/mastra-ai/mastra/commit/e0941c3d7fc75695d5d258e7008fd5d6e650800c), [`20e6f19`](https://github.com/mastra-ai/mastra/commit/20e6f1971d51d3ff6dd7accad8aaaae826d540ed), [`4f0b3c6`](https://github.com/mastra-ai/mastra/commit/4f0b3c66f196c06448487f680ccbb614d281e2f7), [`74c4f22`](https://github.com/mastra-ai/mastra/commit/74c4f22ed4c71e72598eacc346ba95cdbc00294f), [`81b6a8f`](https://github.com/mastra-ai/mastra/commit/81b6a8ff79f49a7549d15d66624ac1a0b8f5f971), [`e4d366a`](https://github.com/mastra-ai/mastra/commit/e4d366aeb500371dd4210d6aa8361a4c21d87034), [`a4f010b`](https://github.com/mastra-ai/mastra/commit/a4f010b22e4355a5fdee70a1fe0f6e4a692cc29e), [`5627a8c`](https://github.com/mastra-ai/mastra/commit/5627a8c6dc11fe3711b3fa7a6ffd6eb34100a306), [`251df45`](https://github.com/mastra-ai/mastra/commit/251df4531407dfa46d805feb40ff3fb49769f455), [`c2b9547`](https://github.com/mastra-ai/mastra/commit/c2b9547bf435f56339f23625a743b2147ab1c7a6), [`58e3931`](https://github.com/mastra-ai/mastra/commit/58e3931af9baa5921688566210f00fb0c10479fa), [`4fba91b`](https://github.com/mastra-ai/mastra/commit/4fba91bec7c95911dc28e369437596b152b04cd0), [`106c960`](https://github.com/mastra-ai/mastra/commit/106c960df5d110ec15ac8f45de8858597fb90ad5), [`12b0cc4`](https://github.com/mastra-ai/mastra/commit/12b0cc4077d886b1a552637dedb70a7ade93528c)]:
+  - @mastra/core@1.0.0-beta.20
+  - @mastra/client-js@1.0.0-beta.20
+  - @mastra/ai-sdk@1.0.0-beta.13
+  - @mastra/react@0.1.0-beta.20
+
 ## 7.0.0-beta.19
 
 ### Patch Changes
