@@ -159,6 +159,33 @@ function stripStepResultRequest<T>(value: T): T {
   return { ...value, stepResult } as T;
 }
 
+/**
+ * The heavy iteration state a **terminal** step's `payload` still carries.
+ *
+ * A step's `payload` is the input it was called with. `stripHeavyIterationFields`
+ * already drops `messages` and the `__`-prefixed state from it, but the durable
+ * loop threads its whole iteration state through the same object, and each of
+ * these three members is conversation-sized: `messageListState` is the full
+ * serialized conversation, `accumulatedSteps` is every step record so far, and
+ * `lastStepResult` is the previous step's result. Since the snapshot is
+ * re-persisted at every step boundary, they are rewritten dozens of times per
+ * turn and grow with the conversation.
+ *
+ * Only terminal steps are touched. The engine does re-read a step's `payload`
+ * when a run resumes, at `evented/execution-engine.ts`, but it reads the
+ * payload of the step named by `resumePath`, which is the suspended one, and a
+ * suspended step is never terminal. A completed step is never re-invoked, so
+ * the input it was called with is dead weight.
+ */
+const TERMINAL_PAYLOAD_ITERATION_FIELDS = ['messageListState', 'accumulatedSteps', 'lastStepResult'];
+
+function stripTerminalPayloadIterationState<T>(value: T): T {
+  if (!isPlainObject(value)) return value;
+  const pruned: Record<string, any> = { ...value };
+  for (const key of TERMINAL_PAYLOAD_ITERATION_FIELDS) delete pruned[key];
+  return pruned as T;
+}
+
 /** Applies the pruning rules to a single serialized step result. */
 function pruneStepResult(result: Record<string, any>): Record<string, any> {
   if (!isPlainObject(result) || typeof result.status !== 'string') return result;
@@ -170,6 +197,7 @@ function pruneStepResult(result: Record<string, any>): Record<string, any> {
   if ('prevOutput' in pruned) pruned.prevOutput = stripHeavyIterationFields(pruned.prevOutput);
 
   if (TERMINAL_STEP_STATUSES.has(result.status)) {
+    pruned.payload = stripTerminalPayloadIterationState(pruned.payload);
     // Completed steps are never resumed again — their old suspension state is
     // dead weight that would otherwise be re-persisted on every later
     // suspension of the run.
