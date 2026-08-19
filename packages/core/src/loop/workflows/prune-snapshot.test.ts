@@ -209,3 +209,89 @@ describe('pruneAgentLoopSnapshot stepResult.request strip', () => {
     expect(countRequestEchoes(original)).toBe(1);
   });
 });
+
+/**
+ * Unit coverage for the terminal-payload iteration-state strip. A step's
+ * `payload` is the input it was called with; the durable loop threads its full
+ * iteration state through that object, so every terminal step keeps a
+ * conversation-sized copy that the engine never reads again.
+ */
+function iterationState() {
+  return {
+    runId: 'run-1',
+    agentId: 'weather',
+    iterationCount: 3,
+    messageListState: { messages: [{ role: 'user', content: 'x'.repeat(2000) }], memoryInfo: { threadId: 't' } },
+    accumulatedSteps: [{ text: 'y'.repeat(2000) }, { text: 'z'.repeat(2000) }],
+    lastStepResult: { reason: 'tool-calls', isContinued: true },
+  };
+}
+
+describe('pruneAgentLoopSnapshot terminal payload iteration state', () => {
+  it('strips the heavy iteration state from a terminal step payload', () => {
+    const pruned = pruneAgentLoopSnapshot({
+      snapshot: snapshotWith({
+        'durable-llm-execution': { status: 'success', payload: iterationState() },
+      }),
+    });
+
+    const payload = (pruned.context as Record<string, any>)['durable-llm-execution'].payload;
+    expect(payload).not.toHaveProperty('messageListState');
+    expect(payload).not.toHaveProperty('accumulatedSteps');
+    expect(payload).not.toHaveProperty('lastStepResult');
+  });
+
+  it('keeps the routing fields of the payload', () => {
+    const pruned = pruneAgentLoopSnapshot({
+      snapshot: snapshotWith({
+        step: { status: 'success', payload: iterationState() },
+      }),
+    });
+
+    const payload = (pruned.context as Record<string, any>).step.payload;
+    expect(payload.runId).toBe('run-1');
+    expect(payload.agentId).toBe('weather');
+    expect(payload.iterationCount).toBe(3);
+  });
+
+  it('leaves a suspended step payload whole, since resume reads it', () => {
+    const pruned = pruneAgentLoopSnapshot({
+      snapshot: snapshotWith({
+        'durable-tool-call': {
+          status: 'suspended',
+          payload: iterationState(),
+          suspendPayload: { __streamState: { keep: true } },
+        },
+      }),
+    });
+
+    const step = (pruned.context as Record<string, any>)['durable-tool-call'];
+    expect(step.payload.messageListState.messages).toHaveLength(1);
+    expect(step.payload.accumulatedSteps).toHaveLength(2);
+    expect(step.payload.lastStepResult).toEqual({ reason: 'tool-calls', isContinued: true });
+    expect(step.suspendPayload).toEqual({ __streamState: { keep: true } });
+  });
+
+  it('leaves a terminal step output whole, since a same-run continuation reads it', () => {
+    const pruned = pruneAgentLoopSnapshot({
+      snapshot: snapshotWith({
+        step: { status: 'success', payload: iterationState(), output: iterationState() },
+      }),
+    });
+
+    const output = (pruned.context as Record<string, any>).step.output;
+    expect(output.accumulatedSteps).toHaveLength(2);
+    expect(output.lastStepResult).toEqual({ reason: 'tool-calls', isContinued: true });
+    expect(output.messageListState.messages).toHaveLength(1);
+  });
+
+  it('is copy-on-write and does not mutate the caller snapshot', () => {
+    const snapshot = snapshotWith({
+      step: { status: 'success', payload: iterationState() },
+    });
+
+    pruneAgentLoopSnapshot({ snapshot });
+
+    expect((snapshot.context as Record<string, any>).step.payload.accumulatedSteps).toHaveLength(2);
+  });
+});
