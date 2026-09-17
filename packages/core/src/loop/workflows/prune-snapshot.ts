@@ -197,8 +197,8 @@ function stripTerminalPayloadState<T>(value: T): T {
  * on BOTH sides of every step result, rewritten at every step boundary. The
  * copies are never read back. The `rebuildSpan` call sites that end a run's
  * agent span (`create-durable-agentic-workflow.ts`, `tool-call.ts`) all read
- * `initData.agentSpanData` or the resume-registry override of it — never a
- * step-level copy — and `initData` is `context.input`, which the pruner
+ * `initData.agentSpanData` or the resume-registry override of it (never a
+ * step-level copy); `initData` is `context.input`, which the pruner
  * leaves whole, so a resumed run still rebuilds its span from a complete
  * copy and the trace loses nothing. The live span was already exported with
  * its attributes while the run was streaming. Measured over 300 real
